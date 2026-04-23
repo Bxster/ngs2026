@@ -1,6 +1,6 @@
 # NGS2026 — Sistema di Rilevamento Veicoli Edge AI
 
-Progetto sviluppato per **New Generation Sensors (Firenze)** — sistema di rilevamento veicoli e lettura targhe su hardware embedded.
+Progetto sviluppato per **New Generation Sensors** — sistema di rilevamento veicoli e lettura targhe su hardware embedded.
 
 ## Hardware
 
@@ -43,7 +43,9 @@ I file dei modelli sono esclusi dal repository via `.gitignore`. La cartella `mo
 ### Dataset di training
 
 Dataset merged: Kaggle (`hammadjavaid/vehicle-object-detection-dataset-5-classes`) + motorcycle da OpenImages V7.
-
+ 
+Dataset pubblicato: [NGS2026 Vehicle Dataset](https://www.kaggle.com/datasets/bxster/ngs2026-vehicle-dataset)
+ 
 | Split | Immagini |
 |-------|----------|
 | Train | 30.508 |
