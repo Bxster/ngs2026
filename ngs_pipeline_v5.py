@@ -48,7 +48,7 @@ from fast_plate_ocr import LicensePlateRecognizer
 # ============================================================================
 
 VIDEO_PATH = '/home/pi/Downloads/VideoAncona2.MOV'   # path file o 0 per camera live
-OUTPUT_DIR = '/home/pi/Desktop/ngs_pipeline_v4_out2234'
+OUTPUT_DIR = '/home/pi/Desktop/ngs_pipeline_v4_out22345'
 
 SMALL_HEF = '/home/pi/yolov11s.hef'
 PLATE_HEF = '/home/pi/Downloads/license_plate_finetune_v1n.hef'
@@ -317,13 +317,22 @@ def run_ocr_on_crop(frame, plate_bbox, ocr_model):
 # VOTING DATABASE
 # ============================================================================
 
+def weighted_plate_vote(plates_with_weights):
+    """Voto pesato: somma i pesi per ogni stringa, vince la stringa col peso totale piu' alto."""
+    if not plates_with_weights:
+        return 'unknown'
+    score = defaultdict(float)
+    for text, w in plates_with_weights:
+        score[text] += w
+    return max(score.items(), key=lambda x: x[1])[0]
+
 class VotingDB:
     def __init__(self, timeout_frames=30):
         self.active = {}
         self.closed = []
         self.timeout = timeout_frames
 
-    def add_observation(self, tid, frame_idx, cls_name, plate_text):
+    def add_observation(self, tid, frame_idx, cls_name, plate_text, plate_weight=1.0):
         if tid == -1:
             return
         if tid not in self.active:
@@ -337,7 +346,7 @@ class VotingDB:
         rec = self.active[tid]
         rec['classes'].append(cls_name)
         if plate_text:
-            rec['plates'].append(plate_text)
+            rec['plates'].append((plate_text, plate_weight))
         rec['last_frame'] = frame_idx
 
     def current_vote(self, tid):
@@ -345,7 +354,7 @@ class VotingDB:
             return None, 'unknown'
         rec = self.active[tid]
         cls_vote = Counter(rec['classes']).most_common(1)[0][0] if rec['classes'] else None
-        plate_vote = Counter(rec['plates']).most_common(1)[0][0] if rec['plates'] else 'unknown'
+        plate_vote = weighted_plate_vote(rec['plates'])
         return cls_vote, plate_vote
 
     def commit_expired(self, current_frame_idx):
@@ -355,7 +364,7 @@ class VotingDB:
         for tid in to_close:
             rec = self.active.pop(tid)
             cls_vote = Counter(rec['classes']).most_common(1)[0][0] if rec['classes'] else 'unknown'
-            plate_vote = Counter(rec['plates']).most_common(1)[0][0] if rec['plates'] else 'unknown'
+            plate_vote = weighted_plate_vote(rec['plates'])
             committed = {
                 'tracker_id': tid,
                 'class': cls_vote,
@@ -373,7 +382,7 @@ class VotingDB:
         for tid in list(self.active.keys()):
             rec = self.active.pop(tid)
             cls_vote = Counter(rec['classes']).most_common(1)[0][0] if rec['classes'] else 'unknown'
-            plate_vote = Counter(rec['plates']).most_common(1)[0][0] if rec['plates'] else 'unknown'
+            plate_vote = weighted_plate_vote(rec['plates'])
             self.closed.append({
                 'tracker_id': tid,
                 'class': cls_vote,
@@ -624,10 +633,14 @@ def main_streaming():
             t0 = time.time()
             for v in tracked:
                 plate_text = ''
+                plate_weight = 1.0
                 if v.get('plate_bbox') is not None:
                     plate_text = run_ocr_on_crop(frame, v['plate_bbox'], ocr_model)
+                    # Peso = area bbox targa (targhe vicine hanno bbox grandi = peso maggiore)
+                    px1, py1, px2, py2 = v['plate_bbox']
+                    plate_weight = max(1, (px2 - px1) * (py2 - py1))
                 v['plate_text'] = plate_text
-                voting_db.add_observation(v['id'], frame_idx, v['class'], plate_text)
+                voting_db.add_observation(v['id'], frame_idx, v['class'], plate_text, plate_weight)
             timing_log['ocr_ms'].append((time.time() - t0) * 1000)
 
             voting_db.commit_expired(frame_idx)
@@ -805,7 +818,7 @@ def main_sequential():
 
     print('[Fase 3/4] Tracking...')
     t0 = time.time()
-    tracker = sv.ByteTrack()
+    tracker = sv.ByteTrack(lost_track_buffer=BYTETRACK_LOST_BUFFER)
     frame_tracked = []
     for vehicles in frame_vehicles:
         if not vehicles:
@@ -848,10 +861,13 @@ def main_sequential():
         frame = frames[idx]
         for v in tracked:
             plate_text = ''
+            plate_weight = 1.0
             if v.get('plate_bbox') is not None:
                 plate_text = run_ocr_on_crop(frame, v['plate_bbox'], ocr_model)
+                px1, py1, px2, py2 = v['plate_bbox']
+                plate_weight = max(1, (px2 - px1) * (py2 - py1))
             v['plate_text'] = plate_text
-            voting_db.add_observation(v['id'], idx, v['class'], plate_text)
+            voting_db.add_observation(v['id'], idx, v['class'], plate_text, plate_weight)
         if idx % 30 == 0:
             print(f'  OCR frame {idx}/{len(frame_tracked)}')
     voting_db.flush_all(len(frame_tracked))
